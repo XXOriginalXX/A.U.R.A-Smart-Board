@@ -16,30 +16,62 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [worker, setWorker] = useState<any>(null);
+  const [mathWorker, setMathWorker] = useState<any>(null);
   const [history, setHistory] = useState<any[][]>([]);
   const [historyStep, setHistoryStep] = useState(0);
   const [extractedText, setExtractedText] = useState('');
+  const [canvasWidth, setCanvasWidth] = useState(window.innerWidth);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
 
+  
   useEffect(() => {
-    const initWorker = async () => {
+    const handleResize = () => {
+      if (canvasContainerRef.current) {
+        setCanvasWidth(canvasContainerRef.current.offsetWidth);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    handleResize(); 
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
+
+  
+  useEffect(() => {
+    const initWorkers = async () => {
+     
       const newWorker = await createWorker();
       await newWorker.load();
       await newWorker.loadLanguage('eng');
       await newWorker.initialize('eng', {
         tessedit_char_whitelist: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/()=.,?!:;%$#@&<>[]{}',
-        tessedit_pageseg_mode: '6', // Assume a single uniform block of text
-        tessedit_ocr_engine_mode: '2', // Use LSTM only
+        tessedit_pageseg_mode: '6', 
         preserve_interword_spaces: '1'
       });
       setWorker(newWorker);
+
+      
+      const mathOcrWorker = await createWorker();
+      await mathOcrWorker.load();
+      await mathOcrWorker.loadLanguage('eng');
+      await mathOcrWorker.initialize('eng', {
+        tessedit_char_whitelist: '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ+-*/()=.,?!:;%$#@&<>[]{}∫∑∏√∂∆∇∞≈≠≤≥±÷×°∠πθαβγ',
+        tessedit_pageseg_mode: '13', 
+        textord_equation_detect: '1', 
+        textord_tabfind_show_vlines: '0',
+        preserve_interword_spaces: '1'
+      });
+      setMathWorker(mathOcrWorker);
     };
     
-    initWorker();
+    initWorkers();
     
     return () => {
-      if (worker) {
-        worker.terminate();
-      }
+      if (worker) worker.terminate();
+      if (mathWorker) mathWorker.terminate();
     };
   }, []);
 
@@ -93,7 +125,7 @@ function App() {
     setIsDrawing(false);
     setLines((prevLines) => {
       const newLines = [...prevLines, currentLine];
-      // Save to history
+     
       const newHistory = history.slice(0, historyStep + 1);
       newHistory.push(newLines);
       setHistory(newHistory);
@@ -106,7 +138,7 @@ function App() {
     setLines([]);
     setAnswer('');
     setExtractedText('');
-    // Save to history
+   
     const newHistory = [...history, []];
     setHistory(newHistory);
     setHistoryStep(newHistory.length - 1);
@@ -131,6 +163,7 @@ function App() {
     }
   };
 
+  
   const preprocessImage = async (dataUrl: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -142,40 +175,40 @@ function App() {
           return;
         }
         
-        // Set canvas dimensions to match image
+       
         canvas.width = img.width;
         canvas.height = img.height;
         
-        // Draw original image
+        
         ctx.drawImage(img, 0, 0);
         
-        // Get image data for processing
+        
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
         
-        // Increase contrast and convert to black and white
+        
         for (let i = 0; i < data.length; i += 4) {
           const r = data[i];
           const g = data[i + 1];
           const b = data[i + 2];
           
-          // Convert to grayscale
-          const gray = 0.3 * r + 0.59 * g + 0.11 * b;
+         
+          const gray = 0.299 * r + 0.587 * g + 0.114 * b;
           
-          // Apply threshold for black and white
-          const threshold = 200;
+          
+          const threshold = 180; 
           const newValue = gray > threshold ? 255 : 0;
           
-          // Set RGB values to new value
+          
           data[i] = newValue;
           data[i + 1] = newValue;
           data[i + 2] = newValue;
         }
         
-        // Put processed image data back on canvas
+        
         ctx.putImageData(imageData, 0, 0);
         
-        // Return processed image as data URL
+        
         resolve(canvas.toDataURL('image/jpeg', 1.0));
       };
       
@@ -183,8 +216,115 @@ function App() {
     });
   };
 
+ 
+  const enhanceImageForMath = async (dataUrl: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(dataUrl);
+          return;
+        }
+        
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        
+        const factor = 1.5;
+        
+        for (let i = 0; i < data.length; i += 4) {
+          
+          for (let j = 0; j < 3; j++) {
+            const val = data[i + j];
+            
+            const newVal = 128 + factor * (val - 128);
+            data[i + j] = Math.min(255, Math.max(0, newVal));
+          }
+          
+         
+          const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
+          const binary = gray > 150 ? 255 : 0;
+          
+          data[i] = binary;
+          data[i + 1] = binary;
+          data[i + 2] = binary;
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg', 1.0));
+      };
+      
+      img.src = dataUrl;
+    });
+  };
+
+  
+  const extractTextFromRegions = async (dataUrl: string): Promise<string> => {
+    if (!worker || !mathWorker) return '';
+    
+    try {
+      const img = new Image();
+      await new Promise(resolve => {
+        img.onload = resolve;
+        img.src = dataUrl;
+      });
+      
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      
+     
+      const processedStandard = await preprocessImage(dataUrl);
+      const processedMath = await enhanceImageForMath(dataUrl);
+      
+      
+      const results = await Promise.all([
+        worker.recognize(processedStandard),
+        mathWorker.recognize(processedMath)
+      ]);
+      
+      let combinedText = '';
+      
+      
+      const normalText = results[0].data.text.trim();
+      
+      
+      const mathText = results[1].data.text.trim();
+      
+      
+      if (mathText.includes('=') || 
+          mathText.includes('+') || 
+          mathText.includes('-') || 
+          mathText.includes('×') || 
+          mathText.includes('÷') ||
+          mathText.includes('∫') ||
+          mathText.includes('∑')) {
+        combinedText = mathText;
+      } else if (normalText.length > mathText.length) {
+        combinedText = normalText;
+      } else {
+        combinedText = mathText;
+      }
+      
+      return combinedText;
+    } catch (error) {
+      console.error('Error splitting image:', error);
+      return '';
+    }
+  };
+
   const extractTextFromCanvas = async () => {
-    if (!stageRef.current || !worker) return '';
+    if (!stageRef.current || !worker || !mathWorker) return '';
     
     setIsProcessing(true);
     
@@ -192,18 +332,21 @@ function App() {
       const canvasElement = document.getElementById('canvas-container');
       if (!canvasElement) return '';
       
-      // Get image from canvas
+      
       const dataUrl = await toJpeg(canvasElement, { quality: 1.0, backgroundColor: 'white' });
       
-      // Preprocess the image to improve OCR accuracy
-      const processedDataUrl = await preprocessImage(dataUrl);
       
-      // Recognize text with multiple attempts using different settings
-      const { data: { text } } = await worker.recognize(processedDataUrl);
+      const extractedText = await extractTextFromRegions(dataUrl);
       
-      const cleanedText = text.trim();
-      setExtractedText(cleanedText);
-      return cleanedText;
+      let finalText = extractedText.trim();
+      
+      
+      if (finalText.length < 5 || finalText.split(' ').length < 2) {
+        finalText = "[Image contains a diagram or equation that couldn't be fully recognized as text]";
+      }
+      
+      setExtractedText(finalText);
+      return finalText;
     } catch (error) {
       console.error('Error extracting text:', error);
       return '';
@@ -217,11 +360,30 @@ function App() {
     setAnswer('');
     
     try {
+      
       const text = await extractTextFromCanvas();
       
-      if (!text) {
-        setAnswer('No text detected on the whiteboard. Please write your question clearly.');
+      
+      const canvasElement = document.getElementById('canvas-container');
+      let imageBase64 = '';
+      
+      if (canvasElement) {
+        const dataUrl = await toJpeg(canvasElement, { quality: 1.0, backgroundColor: 'white' });
+        imageBase64 = dataUrl.split(',')[1]; 
+      }
+      
+      if (!text && !imageBase64) {
+        setAnswer('No content detected on the whiteboard. Please write your question clearly.');
         return;
+      }
+      
+      
+      let promptText = '';
+      
+      if (text.includes("[Image contains")) {
+        promptText = "I've written something on a whiteboard that appears to be a diagram, equation, or drawing. Please analyze what's in the image and provide a detailed explanation or solution.";
+      } else {
+        promptText = `Answer this question or solve this problem: ${text}. Provide a clear, step-by-step explanation.`;
       }
       
       const response = await fetch(
@@ -236,8 +398,15 @@ function App() {
               {
                 parts: [
                   {
-                    text: `Answer this question or solve this problem: ${text}. Provide a clear, step-by-step explanation.`,
+                    text: promptText,
                   },
+                 
+                  ...(imageBase64 ? [{
+                    inline_data: {
+                      mime_type: "image/jpeg",
+                      data: imageBase64
+                    }
+                  }] : [])
                 ],
               },
             ],
@@ -252,7 +421,7 @@ function App() {
       } else if (data.error) {
         setAnswer(`Error: ${data.error.message || 'Failed to generate answer'}`);
       } else {
-        setAnswer('Sorry, I couldn\'t generate an answer. Please try rephrasing your question.');
+        setAnswer('Sorry, I couldn\'t generate an answer. Please try rephrasing your question or drawing it more clearly.');
       }
     } catch (error) {
       console.error('Error generating answer:', error);
@@ -260,6 +429,53 @@ function App() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Touch events for mobile support
+  const handleTouchStart = (e: any) => {
+    e.evt.preventDefault();
+    const touches = e.evt.touches[0];
+    const stage = e.target.getStage();
+    const pos = stage.getPointerPosition();
+    setIsDrawing(true);
+    const newLine = {
+      points: [pos.x, pos.y],
+      color: brushColor,
+      strokeWidth: brushRadius,
+      tool: isEraser ? 'eraser' : 'pen',
+    };
+    setCurrentLine(newLine);
+  };
+
+  const handleTouchMove = (e: any) => {
+    e.evt.preventDefault();
+    if (!isDrawing) return;
+    
+    const stage = e.target.getStage();
+    const pos = stage.getPointerPosition();
+    
+    setCurrentLine((prevLine: any) => {
+      return {
+        ...prevLine,
+        points: [...prevLine.points, pos.x, pos.y],
+      };
+    });
+  };
+
+  const handleTouchEnd = (e: any) => {
+    e.evt.preventDefault();
+    if (!isDrawing) return;
+    
+    setIsDrawing(false);
+    setLines((prevLines) => {
+      const newLines = [...prevLines, currentLine];
+      // Save to history
+      const newHistory = history.slice(0, historyStep + 1);
+      newHistory.push(newLines);
+      setHistory(newHistory);
+      setHistoryStep(newHistory.length - 1);
+      return newLines;
+    });
   };
 
   const colorOptions = ['#000000', '#FF0000', '#0000FF', '#008000', '#FFA500', '#800080'];
@@ -370,13 +586,16 @@ function App() {
           </div>
           
           {/* Canvas */}
-          <div className="relative bg-white" id="canvas-container">
+          <div className="relative bg-white" id="canvas-container" ref={canvasContainerRef}>
             <Stage
-              width={window.innerWidth}
+              width={canvasWidth}
               height={500}
               onMouseDown={handleMouseDown}
               onMousemove={handleMouseMove}
               onMouseup={handleMouseUp}
+              onTouchStart={handleTouchStart}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd}
               ref={stageRef}
               style={{ width: '100%', height: '500px' }}
             >
@@ -384,7 +603,7 @@ function App() {
                 <Rect
                   x={0}
                   y={0}
-                  width={window.innerWidth}
+                  width={canvasWidth}
                   height={500}
                   fill="white"
                 />
@@ -419,10 +638,25 @@ function App() {
             </Stage>
           </div>
           
+          {/* Extraction Status */}
+          {isProcessing && (
+            <div className="p-2 bg-purple-100 border-t border-purple-200 text-center">
+              <p className="text-sm text-purple-800">
+                <Loader2 size={16} className="inline animate-spin mr-1" />
+                Analyzing your whiteboard content...
+              </p>
+            </div>
+          )}
+          
           {/* Extracted Text (Optional) */}
-          {extractedText && (
+          {extractedText && !isProcessing && (
             <div className="p-2 bg-gray-100 border-t border-gray-200">
-              <p className="text-sm text-gray-600">Detected text: <span className="font-mono">{extractedText}</span></p>
+              <p className="text-sm text-gray-600">
+                Detected content: <span className="font-mono">{extractedText}</span>
+                {extractedText.includes("[Image contains") && (
+                  <span className="ml-2 text-gray-500 italic">(Using image recognition since text detection was limited)</span>
+                )}
+              </p>
             </div>
           )}
           
@@ -438,8 +672,8 @@ function App() {
         </div>
         
         <div className="mt-6 text-center text-gray-600 text-sm">
-          <p>Write your question or equation on the whiteboard and click "Generate Answer" to get a solution.</p>
-          <p className="mt-1">Supports mathematical equations, general knowledge questions, and more!</p>
+          <p>Write your question, equation, or draw a diagram on the whiteboard and click "Generate Answer" to get a solution.</p>
+          <p className="mt-1">Supports mathematical equations, general knowledge questions, diagrams, and more!</p>
         </div>
       </div>
     </div>
